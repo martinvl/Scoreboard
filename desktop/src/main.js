@@ -11,7 +11,7 @@ $(document).ready(function () {
     scoreboard = new Scoreboard();
     $(document.body).append(scoreboard.div);
 
-    socket = io.connect('localhost');
+    socket = io.connect('');
     syncer = new ObjSync(socket, {delimiter:'/'});
 
     syncer.on('update', function () {

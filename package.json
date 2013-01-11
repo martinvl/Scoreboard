@@ -5,7 +5,9 @@
         "ObjSync":">=0.1.0b",
         "socket.io":">=0.9",
         "fs-watcher":">=0.2",
-        "express":">=3.0"
+        "express":">=3.0",
+        "jquery-browserify":">=1.8",
+        "socket.io-client":">=0.9"
     },
     "bin":
     {
