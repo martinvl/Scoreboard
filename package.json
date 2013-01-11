@@ -5,7 +5,7 @@
         "ObjSync":">=0.1.0b",
         "socket.io":">=0.9",
         "fs-watcher":">=0.2",
-        "express":"=>0.3"
+        "express":"=>3.0"
     },
     "scripts":
     {
