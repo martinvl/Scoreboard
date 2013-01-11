@@ -32,4 +32,8 @@ watcher.on('watching', function (event) {
     }
 });
 
+watcher.on('delete', function (event) {
+    tasksSyncer.setValueForKeypath(undefined, event.path);
+});
+
 watcher.start();
