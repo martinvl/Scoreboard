@@ -1,13 +1,14 @@
 {
     "name":"Scoreboard",
     "version":"0.0.1b-1",
-    "main":"index.js",
     "dependencies":{
         "ObjSync":">=0.1.0b",
-        "Socket.IO":">=0.9"
+        "socket.io":">=0.9",
+        "fs-watcher":">=0.2",
+        "express":"=>0.3"
     },
     "scripts":
     {
-        "start":"node daemon"
+        "start":"node server"
     }
 }
