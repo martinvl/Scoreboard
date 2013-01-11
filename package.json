@@ -7,8 +7,9 @@
         "fs-watcher":">=0.2",
         "express":">=3.0"
     },
-    "scripts":
+    "bin":
     {
-        "start":"node server"
-    }
+        "scoreboard":"./server.js"
+    },
+    "main": "./scoreboard"
 }
