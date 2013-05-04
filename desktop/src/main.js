@@ -15,6 +15,7 @@ $(document).ready(function () {
     syncer = new ObjSync(socket, {delimiter:'/'});
 
     syncer.on('update', function () {
+        console.dir('update');
         scoreboard.setData(syncer.getObject());
     });
 });

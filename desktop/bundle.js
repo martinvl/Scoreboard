@@ -13604,40 +13604,69 @@ if (typeof define === "function" && define.amd) {
 require.define("/node_modules/ObjSync/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"lib/ObjSync.js"}
 });
 
-require.define("/node_modules/ObjSync/lib/ObjSync.js",function(require,module,exports,__dirname,__filename,process){var inherits = require('util').inherits;
-var KVCObject = require('KVCObject');
+require.define("/node_modules/ObjSync/lib/ObjSync.js",function(require,module,exports,__dirname,__filename,process){var KVCObject = require('kvcobj');
+
+var DEFAULT_OPTIONS = {
+    subscribe:true,
+    publish:false
+};
 
 function ObjSync(transport, options) {
     KVCObject.prototype.constructor.apply(this, [options]);
 
     this._transport = transport;
+
+    this._setOptions(options, DEFAULT_OPTIONS);
     this._initialize();
 }
 
-inherits(ObjSync, KVCObject);
+ObjSync.prototype = new KVCObject();
+ObjSync.prototype.constructor = ObjSync;
 module.exports = ObjSync;
 
 ObjSync.prototype._initialize = function () {
     this._justReceivedUpdate = false;
 
+    if (this._options.publish) {
+        this._setupPublish();
+    }
+
+    if (this._options.subscribe) {
+        this._setupSubscription();
+
+        var self = this;
+        this._transport.on('connection', function (socket) {
+            self._setupSubscription(socket);
+        });
+    }
+};
+
+ObjSync.prototype._setupPublish = function () {
     var self = this;
 
-    // handle initial connections
     this._transport.on('connection', function (socket) {
-        self._sendBase(socket);
+        self._publishBase(socket);
     });
 
-    this._transport.on('create', function (base) {
-        self._receiveBase(base);
-    });
-
-    // handle incomming updates
-    this._transport.on('update', function (payload) {
-        self._receiveUpdate(payload);
+    this._transport.on('connect', function () {
+        self._publishBase(self._transport);
     });
 
     this.on('update', function (updated) {
-        self._sendUpdate(updated);
+        self._publishUpdate(updated);
+    });
+};
+
+ObjSync.prototype._setupSubscription = function (transport) {
+    transport = transport || this._transport;
+
+    var self = this;
+    transport.on('create', function (base) {
+        self._receiveBase(base);
+    });
+
+    transport.on('update', function (payload) {
+        self._receiveUpdate(payload);
     });
 };
 
@@ -13650,11 +13679,11 @@ ObjSync.prototype._receiveUpdate = function (payload) {
 
     if (this._hasChanges()) {
         this._justReceivedUpdate = true;
-        this._emitChanges();
+        this.commit();
     }
 };
 
-ObjSync.prototype._sendUpdate = function (updated) {
+ObjSync.prototype._publishUpdate = function (updated) {
     if (!this._justReceivedUpdate) {
         var payload = this._assemblePayload(updated);
 
@@ -13712,8 +13741,8 @@ ObjSync.prototype._dismantlePayload = function (payload) {
     return updated;
 };
 
-ObjSync.prototype._sendBase = function (socket) {
-    socket.emit('create', this.getObject());
+ObjSync.prototype._publishBase = function (transport) {
+    transport.emit('create', this.getObject());
 };
 
 ObjSync.prototype._receiveBase = function (base) {
@@ -13721,323 +13750,322 @@ ObjSync.prototype._receiveBase = function (base) {
 
     if (this._hasChanges()) {
         this._justReceivedUpdate = true;
-        this._emitChanges();
+        this.commit();
     }
 };
 
 });
 
-require.define("util",function(require,module,exports,__dirname,__filename,process){var events = require('events');
+require.define("/node_modules/ObjSync/node_modules/kvcobj/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"lib/KVCObject.js"}
+});
 
-exports.print = function () {};
-exports.puts = function () {};
-exports.debug = function() {};
+require.define("/node_modules/ObjSync/node_modules/kvcobj/lib/KVCObject.js",function(require,module,exports,__dirname,__filename,process){var EventEmitter = require('events').EventEmitter;
 
-exports.inspect = function(obj, showHidden, depth, colors) {
-  var seen = [];
+// --- Defaults ---
+var DEFAULT_OPTIONS = {
+    delimiter:'.'
+};
 
-  var stylize = function(str, styleType) {
-    // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
-    var styles =
-        { 'bold' : [1, 22],
-          'italic' : [3, 23],
-          'underline' : [4, 24],
-          'inverse' : [7, 27],
-          'white' : [37, 39],
-          'grey' : [90, 39],
-          'black' : [30, 39],
-          'blue' : [34, 39],
-          'cyan' : [36, 39],
-          'green' : [32, 39],
-          'magenta' : [35, 39],
-          'red' : [31, 39],
-          'yellow' : [33, 39] };
+var DEFAULT_PREFIX = '';
 
-    var style =
-        { 'special': 'cyan',
-          'number': 'blue',
-          'boolean': 'yellow',
-          'undefined': 'grey',
-          'null': 'bold',
-          'string': 'green',
-          'date': 'magenta',
-          // "name": intentionally not styling
-          'regexp': 'red' }[styleType];
+function KVCObject(options) {
+    EventEmitter.prototype.constructor.apply(this);
 
-    if (style) {
-      return '\033[' + styles[style][0] + 'm' + str +
-             '\033[' + styles[style][1] + 'm';
-    } else {
-      return str;
-    }
-  };
-  if (! colors) {
-    stylize = function(str, styleType) { return str; };
-  }
+    this._resetObject();
+    this._resetChanges();
+    this._setOptions(options);
+}
 
-  function format(value, recurseTimes) {
-    // Provide a hook for user-specified inspect functions.
-    // Check that value is an object with an inspect function on it
-    if (value && typeof value.inspect === 'function' &&
-        // Filter out the util module, it's inspect function is special
-        value !== exports &&
-        // Also filter out any prototype objects using the circular check.
-        !(value.constructor && value.constructor.prototype === value)) {
-      return value.inspect(recurseTimes);
+KVCObject.prototype = new EventEmitter();
+KVCObject.prototype.constructor = KVCObject;
+module.exports = KVCObject;
+
+// --- Initialization ---
+KVCObject.prototype._resetObject = function () {
+    this._object = {};
+};
+
+KVCObject.prototype._resetChanges = function () {
+    this._changes = {created:{}, updated:{}, deleted:{}};
+};
+
+KVCObject.prototype._setOptions = function (options, defaultOptions) {
+    if (this._options === undefined) {
+        this._options = {};
     }
 
-    // Primitive types cannot have properties
-    switch (typeof value) {
-      case 'undefined':
-        return stylize('undefined', 'undefined');
+    options = options || {};
+    defaultOptions = defaultOptions || DEFAULT_OPTIONS;
 
-      case 'string':
-        var simple = '\'' + JSON.stringify(value).replace(/^"|"$/g, '')
-                                                 .replace(/'/g, "\\'")
-                                                 .replace(/\\"/g, '"') + '\'';
-        return stylize(simple, 'string');
-
-      case 'number':
-        return stylize('' + value, 'number');
-
-      case 'boolean':
-        return stylize('' + value, 'boolean');
-    }
-    // For some reason typeof null is "object", so special case here.
-    if (value === null) {
-      return stylize('null', 'null');
-    }
-
-    // Look up the keys of the object.
-    var visible_keys = Object_keys(value);
-    var keys = showHidden ? Object_getOwnPropertyNames(value) : visible_keys;
-
-    // Functions without properties can be shortcutted.
-    if (typeof value === 'function' && keys.length === 0) {
-      if (isRegExp(value)) {
-        return stylize('' + value, 'regexp');
-      } else {
-        var name = value.name ? ': ' + value.name : '';
-        return stylize('[Function' + name + ']', 'special');
-      }
-    }
-
-    // Dates without properties can be shortcutted
-    if (isDate(value) && keys.length === 0) {
-      return stylize(value.toUTCString(), 'date');
-    }
-
-    var base, type, braces;
-    // Determine the object type
-    if (isArray(value)) {
-      type = 'Array';
-      braces = ['[', ']'];
-    } else {
-      type = 'Object';
-      braces = ['{', '}'];
-    }
-
-    // Make functions say that they are functions
-    if (typeof value === 'function') {
-      var n = value.name ? ': ' + value.name : '';
-      base = (isRegExp(value)) ? ' ' + value : ' [Function' + n + ']';
-    } else {
-      base = '';
-    }
-
-    // Make dates with properties first say the date
-    if (isDate(value)) {
-      base = ' ' + value.toUTCString();
-    }
-
-    if (keys.length === 0) {
-      return braces[0] + base + braces[1];
-    }
-
-    if (recurseTimes < 0) {
-      if (isRegExp(value)) {
-        return stylize('' + value, 'regexp');
-      } else {
-        return stylize('[Object]', 'special');
-      }
-    }
-
-    seen.push(value);
-
-    var output = keys.map(function(key) {
-      var name, str;
-      if (value.__lookupGetter__) {
-        if (value.__lookupGetter__(key)) {
-          if (value.__lookupSetter__(key)) {
-            str = stylize('[Getter/Setter]', 'special');
-          } else {
-            str = stylize('[Getter]', 'special');
-          }
+    for (var key in defaultOptions) {
+        if (options.hasOwnProperty(key)) {
+            this._options[key] = options[key];
         } else {
-          if (value.__lookupSetter__(key)) {
-            str = stylize('[Setter]', 'special');
-          }
+            this._options[key] = defaultOptions[key];
         }
-      }
-      if (visible_keys.indexOf(key) < 0) {
-        name = '[' + key + ']';
-      }
-      if (!str) {
-        if (seen.indexOf(value[key]) < 0) {
-          if (recurseTimes === null) {
-            str = format(value[key]);
-          } else {
-            str = format(value[key], recurseTimes - 1);
-          }
-          if (str.indexOf('\n') > -1) {
-            if (isArray(value)) {
-              str = str.split('\n').map(function(line) {
-                return '  ' + line;
-              }).join('\n').substr(2);
-            } else {
-              str = '\n' + str.split('\n').map(function(line) {
-                return '   ' + line;
-              }).join('\n');
+    }
+};
+
+// --- Getters ---
+KVCObject.prototype.getObject = function () {
+    return this.getObjectForKeypath('');
+};
+
+KVCObject.prototype.getObjectForKeypath = function (keypath) {
+    return this._inflateObject(this._object, this._prefixKeypath(keypath));
+};
+
+KVCObject.prototype.getValueForKeypath = function (keypath) {
+    return this._object[this._prefixKeypath(keypath)];
+};
+
+// --- Setters ---
+KVCObject.prototype.setObject = function (object, silent) {
+    this.setObjectForKeypath(object, '', silent);
+};
+
+KVCObject.prototype.setObjectForKeypath = function (object, rootKeypath, silent) {
+    var newObject = this._flattenObject(object, rootKeypath);
+
+    // set deleted
+    for (var keypath in this._object) {
+        if (this._isSuperpath(keypath, rootKeypath)) {
+            this.setValueForKeypath(newObject[keypath], keypath, true);
+        }
+    }
+
+    // set updated
+    for (var keypath in newObject) {
+        this.setValueForKeypath(newObject[keypath], keypath, true);
+    }
+
+    if (!silent) {
+        this.commit();
+    }
+};
+
+KVCObject.prototype.setValueForKeypath = function (value, keypath, silent) {
+    var originalValue = this.getValueForKeypath(keypath);
+
+    if (originalValue === undefined) {
+        this._createKeypath(keypath);
+    }
+
+    // apply new value
+    if (value === undefined) {
+        delete this._object[keypath];
+    } else {
+        this._object[keypath] = value;
+    }
+
+    // queue events for changes
+    if (originalValue === undefined) {
+        this._queueCreated(keypath, silent);
+    } else if (value === undefined) {
+        this._deleteKeypath(keypath);
+        this._queueDeleted(keypath, silent);
+    }
+
+    if (originalValue != value) {
+        this._queueUpdated(keypath, silent);
+    }
+};
+
+// --- Event handling ---
+KVCObject.prototype._hasChanges = function () {
+    return this._objectSize(this._changes.updated) > 0;
+};
+
+KVCObject.prototype.commit = function () {
+    var created = this._changes.created;
+    var updated = this._changes.updated;
+    var deleted = this._changes.deleted;
+
+    this._resetChanges();
+
+    if (this._objectSize(created) > 0) {
+        this.emit('create', created);
+    }
+
+    if (this._objectSize(updated) > 0) {
+        this.emit('update', updated);
+    }
+
+    if (this._objectSize(deleted) > 0) {
+        this.emit('delete', deleted);
+    }
+};
+
+KVCObject.prototype._queueCreated = function (keypath, silent) {
+    this._changes.created[keypath] = this.getValueForKeypath(keypath);
+
+    if (!silent) {
+        this.commit();
+    }
+};
+
+KVCObject.prototype._queueUpdated = function (keypath, silent) {
+    this._changes.updated[keypath] = this.getValueForKeypath(keypath);
+
+    if (!silent) {
+        this.commit();
+    }
+};
+
+KVCObject.prototype._queueDeleted = function (keypath, silent) {
+    this._changes.deleted[keypath] = this.getValueForKeypath(keypath);
+
+    if (!silent) {
+        this.commit();
+    }
+};
+
+// --- Helper functions ---
+KVCObject.prototype._prefixKeypath = function (keypath, prefix) {
+    if (prefix === undefined) {
+        prefix = DEFAULT_PREFIX;
+    }
+
+    var delimiter = this._options.delimiter;
+
+    if (this._isSuperpath(keypath, prefix)) {
+        return keypath;
+    } else if (keypath.length > 0) {
+        return prefix + delimiter + keypath;
+    } else {
+        return prefix;
+    }
+};
+
+KVCObject.prototype._unprefixKeypath = function (keypath, prefix) {
+    if (prefix === undefined) {
+        prefix = DEFAULT_PREFIX;
+    }
+
+    var delimiter = this._options.delimiter;
+
+    var prefixPattern = new RegExp(prefix + '\\' + delimiter + '?'); // XXX escape hack
+    return keypath.replace(prefixPattern, '');
+};
+
+KVCObject.prototype._hasSuperpath = function (superpath) {
+    for (var keypath in this._object) {
+        if (this._isSuperpath(keypath, superpath)) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+KVCObject.prototype._isSuperpath = function (keypath, superpath) {
+    if (superpath.length == 0) {
+        return true;
+    }
+
+    if (keypath == superpath) {
+        return true;
+    }
+
+    var delimiter = this._options.delimiter;
+    if (keypath.slice(0, superpath.length + delimiter.length) ==
+            superpath + delimiter) {
+        return true;
+    }
+
+    return false;
+};
+
+KVCObject.prototype._flattenObject = function (object, keypath, flatObject) {
+    flatObject = flatObject ? flatObject : {};
+
+    if (typeof(object) === 'object') {
+        for (var key in object) {
+            var childKeypath = key;
+
+            if (keypath.length > 0) {
+                childKeypath = keypath + this._options.delimiter + key;
             }
-          }
-        } else {
-          str = stylize('[Circular]', 'special');
+
+            this._flattenObject(object[key], childKeypath, flatObject);
         }
-      }
-      if (typeof name === 'undefined') {
-        if (type === 'Array' && key.match(/^\d+$/)) {
-          return str;
-        }
-        name = JSON.stringify('' + key);
-        if (name.match(/^"([a-zA-Z_][a-zA-Z_0-9]*)"$/)) {
-          name = name.substr(1, name.length - 2);
-          name = stylize(name, 'name');
-        } else {
-          name = name.replace(/'/g, "\\'")
-                     .replace(/\\"/g, '"')
-                     .replace(/(^"|"$)/g, "'");
-          name = stylize(name, 'string');
-        }
-      }
-
-      return name + ': ' + str;
-    });
-
-    seen.pop();
-
-    var numLinesEst = 0;
-    var length = output.reduce(function(prev, cur) {
-      numLinesEst++;
-      if (cur.indexOf('\n') >= 0) numLinesEst++;
-      return prev + cur.length + 1;
-    }, 0);
-
-    if (length > 50) {
-      output = braces[0] +
-               (base === '' ? '' : base + '\n ') +
-               ' ' +
-               output.join(',\n  ') +
-               ' ' +
-               braces[1];
-
     } else {
-      output = braces[0] + base + ' ' + output.join(', ') + ' ' + braces[1];
+        flatObject[keypath] = object;
     }
 
-    return output;
-  }
-  return format(obj, (typeof depth === 'undefined' ? 2 : depth));
+    return flatObject;
 };
 
+KVCObject.prototype._inflateObject = function (flatObject, prefix) {
+    var object = {};
 
-function isArray(ar) {
-  return ar instanceof Array ||
-         Array.isArray(ar) ||
-         (ar && ar !== Object.prototype && isArray(ar.__proto__));
-}
+    for (var keypath in flatObject) {
+        var value = flatObject[keypath];
+        var root = object;
 
-
-function isRegExp(re) {
-  return re instanceof RegExp ||
-    (typeof re === 'object' && Object.prototype.toString.call(re) === '[object RegExp]');
-}
-
-
-function isDate(d) {
-  if (d instanceof Date) return true;
-  if (typeof d !== 'object') return false;
-  var properties = Date.prototype && Object_getOwnPropertyNames(Date.prototype);
-  var proto = d.__proto__ && Object_getOwnPropertyNames(d.__proto__);
-  return JSON.stringify(proto) === JSON.stringify(properties);
-}
-
-function pad(n) {
-  return n < 10 ? '0' + n.toString(10) : n.toString(10);
-}
-
-var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
-              'Oct', 'Nov', 'Dec'];
-
-// 26 Feb 16:19:34
-function timestamp() {
-  var d = new Date();
-  var time = [pad(d.getHours()),
-              pad(d.getMinutes()),
-              pad(d.getSeconds())].join(':');
-  return [d.getDate(), months[d.getMonth()], time].join(' ');
-}
-
-exports.log = function (msg) {};
-
-exports.pump = null;
-
-var Object_keys = Object.keys || function (obj) {
-    var res = [];
-    for (var key in obj) res.push(key);
-    return res;
-};
-
-var Object_getOwnPropertyNames = Object.getOwnPropertyNames || function (obj) {
-    var res = [];
-    for (var key in obj) {
-        if (Object.hasOwnProperty.call(obj, key)) res.push(key);
-    }
-    return res;
-};
-
-var Object_create = Object.create || function (prototype, properties) {
-    // from es5-shim
-    var object;
-    if (prototype === null) {
-        object = { '__proto__' : null };
-    }
-    else {
-        if (typeof prototype !== 'object') {
-            throw new TypeError(
-                'typeof prototype[' + (typeof prototype) + '] != \'object\''
-            );
+        if (!this._isSuperpath(keypath, prefix)) {
+            continue;
         }
-        var Type = function () {};
-        Type.prototype = prototype;
-        object = new Type();
-        object.__proto__ = prototype;
+
+        var relativeKeypath = this._unprefixKeypath(keypath, prefix);
+        var keys = relativeKeypath.split(this._options.delimiter);
+
+        for (var idx in keys.slice(0, -1)) {
+            var key = keys[idx];
+
+            if (root[key] === undefined) {
+                root[key] = {};
+            }
+
+            root = root[key];
+        }
+
+        root[keys.pop()] = value;
     }
-    if (typeof properties !== 'undefined' && Object.defineProperties) {
-        Object.defineProperties(object, properties);
-    }
+
     return object;
 };
 
-exports.inherits = function(ctor, superCtor) {
-  ctor.super_ = superCtor;
-  ctor.prototype = Object_create(superCtor.prototype, {
-    constructor: {
-      value: ctor,
-      enumerable: false,
-      writable: true,
-      configurable: true
+KVCObject.prototype._objectSize = function (object) {
+    var size = 0;
+
+    for (var key in object) {
+        ++size;
     }
-  });
+
+    return size;
+};
+
+KVCObject.prototype._createKeypath = function (keypath) {
+    var delimiter = this._options.delimiter;
+    var keys = keypath.split(delimiter);
+
+    var key = '';
+    for (var idx in keys) {
+        key += keys[idx];
+
+        if (!this._hasSuperpath(key)) {
+            this.emit('_create', key);
+        }
+
+        key += delimiter;
+    }
+};
+
+KVCObject.prototype._deleteKeypath = function (keypath) {
+    var delimiter = this._options.delimiter;
+    var keys = keypath.split(delimiter);
+
+    var key = '';
+    for (var idx in keys) {
+        key += keys[idx];
+
+        if (!this._hasSuperpath(key)) {
+            this.emit('_delete', key);
+        }
+
+        key += delimiter;
+    }
 };
 
 });
@@ -14216,316 +14244,10 @@ EventEmitter.prototype.listeners = function(type) {
 
 });
 
-require.define("/node_modules/KVCObject/package.json",function(require,module,exports,__dirname,__filename,process){module.exports = {"main":"lib/KVCObject.js"}
-});
-
-require.define("/node_modules/KVCObject/lib/KVCObject.js",function(require,module,exports,__dirname,__filename,process){var inherits = require('util').inherits;
-var EventEmitter = require('events').EventEmitter;
-
-// --- Defaults ---
-var DEFAULT_OPTIONS = {
-    delimiter:'.'
-};
-
-var DEFAULT_PREFIX = '';
-
-function KVCObject(options) {
-    this._resetObject();
-    this._resetChanges();
-    this._setOptions(options);
-}
-
-inherits(KVCObject, EventEmitter);
-module.exports = KVCObject;
-
-// --- Initialization ---
-KVCObject.prototype._resetObject = function () {
-    this._object = {};
-};
-
-KVCObject.prototype._resetChanges = function () {
-    this._changes = {created:{}, updated:{}, deleted:{}};
-};
-
-KVCObject.prototype._setOptions = function (options, defaultOptions) {
-    if (this._options === undefined) {
-        this._options = {};
-    }
-
-    options = options || {};
-    defaultOptions = defaultOptions || DEFAULT_OPTIONS;
-
-    for (var key in defaultOptions) {
-        if (options.hasOwnProperty(key)) {
-            this._options[key] = options[key];
-        } else {
-            this._options[key] = defaultOptions[key];
-        }
-    }
-};
-
-// --- Getters ---
-KVCObject.prototype.getObject = function () {
-    return this.getObjectForKeypath('');
-};
-
-KVCObject.prototype.getObjectForKeypath = function (keypath) {
-    return this._inflateObject(this._object, this._prefixKeypath(keypath));
-};
-
-KVCObject.prototype.getValueForKeypath = function (keypath) {
-    return this._object[this._prefixKeypath(keypath)];
-};
-
-// --- Setters ---
-KVCObject.prototype.setObject = function (object, silent) {
-    this.setObjectForKeypath(object, '', silent);
-};
-
-KVCObject.prototype.setObjectForKeypath = function (object, rootKeypath, silent) {
-    var newObject = this._flattenObject(object, rootKeypath);
-
-    // set deleted
-    for (var keypath in this._object) {
-        if (this._isSuperpath(keypath, rootKeypath)) {
-            this.setValueForKeypath(newObject[keypath], keypath, true);
-        }
-    }
-
-    // set updated
-    for (var keypath in newObject) {
-        this.setValueForKeypath(newObject[keypath], keypath, true);
-    }
-
-    if (!silent) {
-        this._emitChanges();
-    }
-};
-
-KVCObject.prototype.setValueForKeypath = function (value, keypath, silent) {
-    var originalValue = this.getValueForKeypath(keypath);
-
-    if (originalValue === undefined) {
-        this._createKeypath(keypath);
-    }
-
-    // apply new value
-    if (value === undefined) {
-        delete this._object[keypath];
-    } else {
-        this._object[keypath] = value;
-    }
-
-    // queue events for changes
-    if (originalValue === undefined) {
-        this._queueCreated(keypath, silent);
-    } else if (value === undefined) {
-        this._deleteKeypath(keypath);
-        this._queueDeleted(keypath, silent);
-    }
-
-    if (originalValue != value) {
-        this._queueUpdated(keypath, silent);
-    }
-};
-
-// --- Event handling ---
-KVCObject.prototype._hasChanges = function () {
-    return this._objectSize(this._changes.updated) > 0;
-};
-
-KVCObject.prototype._emitChanges = function () {
-    var created = this._changes.created;
-    var updated = this._changes.updated;
-    var deleted = this._changes.deleted;
-
-    this._resetChanges();
-
-    if (this._objectSize(created) > 0) {
-        this.emit('create', created);
-    }
-
-    if (this._objectSize(updated) > 0) {
-        this.emit('update', updated);
-    }
-
-    if (this._objectSize(deleted) > 0) {
-        this.emit('delete', deleted);
-    }
-};
-
-KVCObject.prototype._queueCreated = function (keypath, silent) {
-    this._changes.created[keypath] = this.getValueForKeypath(keypath);
-
-    if (!silent) {
-        this._emitChanges();
-    }
-};
-
-KVCObject.prototype._queueUpdated = function (keypath, silent) {
-    this._changes.updated[keypath] = this.getValueForKeypath(keypath);
-
-    if (!silent) {
-        this._emitChanges();
-    }
-};
-
-KVCObject.prototype._queueDeleted = function (keypath, silent) {
-    this._changes.deleted[keypath] = this.getValueForKeypath(keypath);
-
-    if (!silent) {
-        this._emitChanges();
-    }
-};
-
-// --- Helper functions ---
-KVCObject.prototype._prefixKeypath = function (keypath, prefix) {
-    if (prefix === undefined) {
-        prefix = DEFAULT_PREFIX;
-    }
-
-    var delimiter = this._options.delimiter;
-
-    if (this._isSuperpath(keypath, prefix)) {
-        return keypath;
-    } else if (keypath.length > 0) {
-        return prefix + delimiter + keypath;
-    } else {
-        return prefix;
-    }
-};
-
-KVCObject.prototype._unprefixKeypath = function (keypath, prefix) {
-    if (prefix === undefined) {
-        prefix = DEFAULT_PREFIX;
-    }
-
-    var delimiter = this._options.delimiter;
-
-    var prefixPattern = new RegExp(prefix + '\\' + delimiter + '?'); // XXX escape hack
-    return keypath.replace(prefixPattern, '');
-};
-
-KVCObject.prototype._hasSuperpath = function (superpath) {
-    for (var keypath in this._object) {
-        if (this._isSuperpath(keypath, superpath)) {
-            return true;
-        }
-    }
-
-    return false;
-};
-
-KVCObject.prototype._isSuperpath = function (keypath, superpath) {
-    if (superpath.length == 0) {
-        return true;
-    }
-
-    if (keypath == superpath) {
-        return true;
-    }
-
-    var delimiter = this._options.delimiter;
-    if (keypath.slice(0, superpath.length + delimiter.length) ==
-            superpath + delimiter) {
-        return true;
-    }
-
-    return false;
-};
-
-KVCObject.prototype._flattenObject = function (object, keypath, flatObject) {
-    flatObject = flatObject ? flatObject : {};
-
-    if (typeof(object) === 'object') {
-        for (var key in object) {
-            var childKeypath = key;
-
-            if (keypath.length > 0) {
-                childKeypath = keypath + this._options.delimiter + key;
-            }
-
-            this._flattenObject(object[key], childKeypath, flatObject);
-        }
-    } else {
-        flatObject[keypath] = object;
-    }
-
-    return flatObject;
-};
-
-KVCObject.prototype._inflateObject = function (flatObject, prefix) {
-    var object = {};
-
-    for (var keypath in flatObject) {
-        var value = flatObject[keypath];
-        var root = object;
-
-        if (!this._isSuperpath(keypath, prefix)) {
-            continue;
-        }
-
-        var relativeKeypath = this._unprefixKeypath(keypath, prefix);
-        var keys = relativeKeypath.split(this._options.delimiter);
-
-        for (var idx in keys.slice(0, -1)) {
-            var key = keys[idx];
-
-            if (root[key] === undefined) {
-                root[key] = {};
-            }
-
-            root = root[key];
-        }
-
-        root[keys.pop()] = value;
-    }
-
-    return object;
-};
-
-KVCObject.prototype._objectSize = function (object) {
-    return Object.keys(object).length;
-};
-
-KVCObject.prototype._createKeypath = function (keypath) {
-    var delimiter = this._options.delimiter;
-    var keys = keypath.split(delimiter);
-
-    var key = '';
-    for (var idx in keys) {
-        key += keys[idx];
-
-        if (!this._hasSuperpath(key)) {
-            this.emit('_create', key);
-        }
-
-        key += delimiter;
-    }
-};
-
-KVCObject.prototype._deleteKeypath = function (keypath) {
-    var delimiter = this._options.delimiter;
-    var keys = keypath.split(delimiter);
-
-    var key = '';
-    for (var idx in keys) {
-        key += keys[idx];
-
-        if (!this._hasSuperpath(key)) {
-            this.emit('_delete', key);
-        }
-
-        key += delimiter;
-    }
-};
-
-});
-
-require.define("/node/Scoreboard/desktop/src/Scoreboard.js",function(require,module,exports,__dirname,__filename,process){var Task = require('./Task');
+require.define("/node/Scoreboard/desktop/src/Scoreboard.js",function(require,module,exports,__dirname,__filename,process){var Exercise = require('./Exercise');
 
 function Scoreboard() {
-    this.tasks = new Object();
+    this.exercises = {};
 
     this.div = document.createElement('div');
     this.div.className = 'scoreboard';
@@ -14534,51 +14256,51 @@ function Scoreboard() {
 module.exports = Scoreboard;
 
 Scoreboard.prototype.setData = function (data) {
-    for (var taskName in data) {
-        var taskData = data[taskName];
+    for (var exerciseID in data) {
+        var exerciseData = data[exerciseID];
+        var exerciseName = exerciseData.displayName;
 
-        // create task if it doesn't exist
-        if (!this.tasks[taskName]) {
-            this.addTask(taskName);
+        // create exercise if it doesn't exist
+        if (!this.exercises.hasOwnProperty(exerciseID)) {
+            this.addExercise(exerciseID, exerciseName);
         }
 
-        // refresh task content
-        task = this.tasks[taskName];
+        // refresh exercise content
+        exercise = this.exercises[exerciseID];
+
         try {
-            task.setData(taskData);
+            exercise.setData(exerciseData);
         } catch(err) {
             console.info('Corrupt data set. ' + err);
         }
     }
 }
 
-Scoreboard.prototype.addTask = function(taskName) {
-    var task = new Task(taskName);
-    this.tasks[taskName] = task;
+Scoreboard.prototype.addExercise = function(exerciseID, displayName) {
+    var exercise = new Exercise(displayName);
+    this.exercises[exerciseID] = exercise;
 
-    this.div.appendChild(task.div);
+    this.div.appendChild(exercise.div);
 }
 
 });
 
-require.define("/node/Scoreboard/desktop/src/Task.js",function(require,module,exports,__dirname,__filename,process){var TASK_PREFIX = 'Oppgave ';
-
-function Task(name) {
-    this.name = name;
+require.define("/node/Scoreboard/desktop/src/Exercise.js",function(require,module,exports,__dirname,__filename,process){function Exercise(displayName) {
+    this.displayName = displayName;
 
     this.setup();
 }
 
-module.exports = Task;
+module.exports = Exercise;
 
-Task.prototype.setup = function() {
+Exercise.prototype.setup = function() {
     // create div element
     this.div = document.createElement('div');
-    this.div.className = 'task';
+    this.div.className = 'exercise';
 
     // create header
     this.header = document.createElement('h1');
-    this.header.innerHTML = TASK_PREFIX + this.name;
+    this.header.innerHTML = this.displayName;
     this.div.appendChild(this.header);
 
     // create name list
@@ -14586,20 +14308,19 @@ Task.prototype.setup = function() {
     this.div.appendChild(this.list);
 }
 
-Task.prototype.setData = function(data) {
+Exercise.prototype.setData = function(data) {
     this.emptyList();
 
-    for (var name in data) {
-        if (data[name]) {
-            var element = document.createElement('li');
-            element.innerHTML = name;
+    for (var idx in data.names) {
+        var name = data.names[idx];
+        var element = document.createElement('li');
+        element.innerHTML = name;
 
-            this.list.appendChild(element);
-        }
+        this.list.appendChild(element);
     }
 }
 
-Task.prototype.emptyList = function() {
+Exercise.prototype.emptyList = function() {
     while (this.list.childNodes.length > 0) {
         this.list.removeChild(this.list.firstChild);
     }
@@ -14624,6 +14345,7 @@ $(document).ready(function () {
     syncer = new ObjSync(socket, {delimiter:'/'});
 
     syncer.on('update', function () {
+        console.dir('update');
         scoreboard.setData(syncer.getObject());
     });
 });

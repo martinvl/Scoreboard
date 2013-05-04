@@ -1,7 +1,7 @@
-var Task = require('./Task');
+var Exercise = require('./Exercise');
 
 function Scoreboard() {
-    this.tasks = new Object();
+    this.exercises = {};
 
     this.div = document.createElement('div');
     this.div.className = 'scoreboard';
@@ -10,27 +10,29 @@ function Scoreboard() {
 module.exports = Scoreboard;
 
 Scoreboard.prototype.setData = function (data) {
-    for (var taskName in data) {
-        var taskData = data[taskName];
+    for (var exerciseID in data) {
+        var exerciseData = data[exerciseID];
+        var exerciseName = exerciseData.displayName;
 
-        // create task if it doesn't exist
-        if (!this.tasks[taskName]) {
-            this.addTask(taskName);
+        // create exercise if it doesn't exist
+        if (!this.exercises.hasOwnProperty(exerciseID)) {
+            this.addExercise(exerciseID, exerciseName);
         }
 
-        // refresh task content
-        task = this.tasks[taskName];
+        // refresh exercise content
+        exercise = this.exercises[exerciseID];
+
         try {
-            task.setData(taskData);
+            exercise.setData(exerciseData);
         } catch(err) {
             console.info('Corrupt data set. ' + err);
         }
     }
 }
 
-Scoreboard.prototype.addTask = function(taskName) {
-    var task = new Task(taskName);
-    this.tasks[taskName] = task;
+Scoreboard.prototype.addExercise = function(exerciseID, displayName) {
+    var exercise = new Exercise(displayName);
+    this.exercises[exerciseID] = exercise;
 
-    this.div.appendChild(task.div);
+    this.div.appendChild(exercise.div);
 }
